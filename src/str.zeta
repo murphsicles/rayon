@@ -1,0 +1,471 @@
+// Auto-converted from /tmp/df-rayon-1.12.0/rayon-1.12.0/src/str.rs
+
+use crate::iter::plumbing::*;
+use crate::iter::*;
+use crate::split_producer::*;
+/// Test if a byte is the start of a UTF-8 character.
+/// (extracted from `str::is_char_boundary`)
+#[inline]
+fn is_char_boundary(b: u8) -> bool {
+ (b as i8) >= - 0x40
+}
+
+/// Find the index of a character boundary near the midpoint.
+#[inline]
+fn find_char_midpoint(chars: &str) -> usize {
+ let mid = chars.len() / 2;
+ let _ = chars.as_bytes().split_at(mid);
+ match right.iter().copied().position(is_char_boundary) { Some(i) => mid + i, None => left.iter().copied().rposition(is_char_boundary).unwrap_or(0) }
+}
+
+/// Try to split a string near the midpoint.
+#[inline]
+fn split(chars: &str) -> Option<(&str, &str)> {
+ let index = find_char_midpoint(chars);
+ if index > 0 { Some(chars.split_at(index)) } else { None }
+}
+
+/// Parallel extensions for strings.
+pub trait ParallelString {
+ fn as_parallel_string(&self) -> &str;
+ fn par_chars(&self) -> Chars<'_>;
+ fn par_char_indices(&self) -> CharIndices<'_>;
+ fn par_bytes(&self) -> Bytes<'_>;
+ fn par_encode_utf16(&self) -> EncodeUtf16<'_>;
+ fn par_split<P: Pattern>(&self, separator: P) -> Split<'_, P>;
+ fn par_split_inclusive<P: Pattern>(&self, separator: P) -> SplitInclusive<'_, P>;
+ fn par_split_terminator<P: Pattern>(&self, terminator: P) -> SplitTerminator<'_, P>;
+ fn par_lines(&self) -> Lines<'_>;
+ fn par_split_whitespace(&self) -> SplitWhitespace<'_>;
+ fn par_split_ascii_whitespace(&self) -> SplitAsciiWhitespace<'_>;
+ fn par_matches<P: Pattern>(&self, pattern: P) -> Matches<'_, P>;
+ fn par_match_indices<P: Pattern>(&self, pattern: P) -> MatchIndices<'_, P>
+}
+
+impl ParallelString for str {
+ fn as_parallel_string(&self) -> &str {
+ self
+ }
+ 
+}
+
+/// We hide the `Pattern` trait in a private module, as its API is not meant
+/// for general consumption. If we could have privacy on trait items, then it
+/// would be nicer to have its basic existence and implementors public while
+/// keeping all of the methods private.
+mod private {
+ use crate::iter::plumbing::Folder;
+ /// Pattern-matching trait for `ParallelString`, somewhat like a mix of
+ /// `std::str::pattern::{Pattern, Searcher}`.
+ /// 
+ /// Implementing this trait is not permitted outside of `rayon`.
+ pub trait Pattern {
+ fn find_in(&self, haystack: &str) -> Option<usize>;
+ fn rfind_in(&self, haystack: &str) -> Option<usize>;
+ fn is_suffix_of(&self, haystack: &str) -> bool;
+ fn fold_splits<ch, F>(&self, haystack: &str, folder: F, skip_last: bool) -> F where F: Folder<&str>;
+ fn fold_inclusive_splits<ch, F>(&self, haystack: &str, folder: F) -> F where F: Folder<&str>;
+ fn fold_matches<ch, F>(&self, haystack: &str, folder: F) -> F where F: Folder<&str>;
+ fn fold_match_indices<ch, F>(&self, haystack: &str, folder: F, base: usize) -> F where F: Folder<(usize, &str)>;
+ }
+ 
+}
+
+use self::private::Pattern;
+#[inline]
+fn offset<T>(base: usize) -> impl Fn {
+ move | (i, x) | (base + i, x)
+}
+
+macro_rules ! impl_pattern { (&$ self: ident => $ pattern: expr) => { private_impl ! { } #[inline] fn find_in(&$ self, chars: &str) -> Option<usize> { chars.find($ pattern) } #[inline] fn rfind_in(&$ self, chars: &str) -> Option<usize> { chars.rfind($ pattern) } #[inline] fn is_suffix_of(&$ self, chars: &str) -> bool { chars.ends_with($ pattern) } fn fold_splits <'ch, F>(&$ self, chars: &'ch str, folder: F, skip_last: bool) -> F where F: Folder <&'ch str>, { let mut split = chars.split($ pattern); if skip_last { split.next_back(); } folder.consume_iter(split) } fn fold_inclusive_splits <'ch, F>(&$ self, chars: &'ch str, folder: F) -> F where F: Folder <&'ch str>, { folder.consume_iter(chars.split_inclusive($ pattern)) } fn fold_matches <'ch, F>(&$ self, chars: &'ch str, folder: F) -> F where F: Folder <&'ch str>, { folder.consume_iter(chars.matches($ pattern)) } fn fold_match_indices <'ch, F>(&$ self, chars: &'ch str, folder: F, base: usize) -> F where F: Folder<(usize, &'ch str)>, { folder.consume_iter(chars.match_indices($ pattern).map(offset(base))) } } }
+impl Pattern for char {
+ // [unsupported impl item]
+}
+
+impl Pattern for &[char] {
+ // [unsupported impl item]
+}
+
+impl<const N: usize> Pattern for [char; N] {
+ // [unsupported impl item]
+}
+
+impl<const N: usize> Pattern for &[char; N] {
+ // [unsupported impl item]
+}
+
+impl<FN: Sync + Send + Fn> Pattern for FN {
+ // [unsupported impl item]
+}
+
+/// Parallel iterator over the characters of a string
+#[derive(Debug, Clone)]
+pub struct Chars<ch> {
+ chars: &str,
+}
+
+struct CharsProducer<ch> {
+ chars: &str,
+}
+
+impl<ch> ParallelIterator for Chars<'ch> {
+ type Item = char;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge_unindexed(CharsProducer { chars: self.chars }, consumer)
+ }
+ 
+}
+
+impl<ch> UnindexedProducer for CharsProducer<'ch> {
+ type Item = char;
+ fn split(self) ->(Self, Option<Self>) {
+ match split(self.chars) { Some((left, right)) =>(CharsProducer { chars: left }, Some(CharsProducer { chars: right }) ), None =>(self, None) }
+ }
+ 
+ fn fold_with(self, folder: F) -> F {
+ folder.consume_iter(self.chars.chars())
+ }
+ 
+}
+
+/// Parallel iterator over the characters of a string, with their positions
+#[derive(Debug, Clone)]
+pub struct CharIndices<ch> {
+ chars: &str,
+}
+
+struct CharIndicesProducer<ch> {
+ index: usize,
+ chars: &str,
+}
+
+impl<ch> ParallelIterator for CharIndices<'ch> {
+ type Item = (usize, char);
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ let producer = CharIndicesProducer { index: 0, chars: self.chars };
+ bridge_unindexed(producer, consumer)
+ }
+ 
+}
+
+impl<ch> UnindexedProducer for CharIndicesProducer<'ch> {
+ type Item = (usize, char);
+ fn split(self) ->(Self, Option<Self>) {
+ match split(self.chars) { Some((left, right)) =>(CharIndicesProducer { chars: left, .. self }, Some(CharIndicesProducer { chars: right, index: self.index + left.len() }) ), None =>(self, None) }
+ }
+ 
+ fn fold_with(self, folder: F) -> F {
+ let base = self.index;
+ folder.consume_iter(self.chars.char_indices().map(offset(base)))
+ }
+ 
+}
+
+/// Parallel iterator over the bytes of a string
+#[derive(Debug, Clone)]
+pub struct Bytes<ch> {
+ chars: &str,
+}
+
+struct BytesProducer<ch> {
+ chars: &str,
+}
+
+impl<ch> ParallelIterator for Bytes<'ch> {
+ type Item = u8;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge_unindexed(BytesProducer { chars: self.chars }, consumer)
+ }
+ 
+}
+
+impl<ch> UnindexedProducer for BytesProducer<'ch> {
+ type Item = u8;
+ fn split(self) ->(Self, Option<Self>) {
+ match split(self.chars) { Some((left, right)) =>(BytesProducer { chars: left }, Some(BytesProducer { chars: right }) ), None =>(self, None) }
+ }
+ 
+ fn fold_with(self, folder: F) -> F {
+ folder.consume_iter(self.chars.bytes())
+ }
+ 
+}
+
+/// Parallel iterator over a string encoded as UTF-16
+#[derive(Debug, Clone)]
+pub struct EncodeUtf16<ch> {
+ chars: &str,
+}
+
+struct EncodeUtf16Producer<ch> {
+ chars: &str,
+}
+
+impl<ch> ParallelIterator for EncodeUtf16<'ch> {
+ type Item = u16;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge_unindexed(EncodeUtf16Producer { chars: self.chars }, consumer)
+ }
+ 
+}
+
+impl<ch> UnindexedProducer for EncodeUtf16Producer<'ch> {
+ type Item = u16;
+ fn split(self) ->(Self, Option<Self>) {
+ match split(self.chars) { Some((left, right)) =>(EncodeUtf16Producer { chars: left }, Some(EncodeUtf16Producer { chars: right }) ), None =>(self, None) }
+ }
+ 
+ fn fold_with(self, folder: F) -> F {
+ folder.consume_iter(self.chars.encode_utf16())
+ }
+ 
+}
+
+/// Parallel iterator over substrings separated by a pattern
+#[derive(Debug, Clone)]
+pub struct Split<ch, P: Pattern> {
+ chars: &str,
+ separator: P,
+}
+
+impl<ch, P: Pattern> Split<'ch, P> {
+ fn new(chars: &str, separator: P) -> Self {
+ Split { chars, separator }
+ }
+ 
+}
+
+impl<ch, P: Pattern> ParallelIterator for Split<'ch, P> {
+ type Item = &str;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ let producer = SplitProducer::new(self.chars, &self.separator);
+ bridge_unindexed(producer, consumer)
+ }
+ 
+}
+
+/// Implement support for `SplitProducer`.
+impl<P: Pattern> Fissile<P> for &str {
+ fn length(&self) -> usize {
+ self.len()
+ }
+ 
+ fn midpoint(&self, end: usize) -> usize {
+ find_char_midpoint(&self [.. end])
+ }
+ 
+ fn find(&self, separator: &P, start: usize, end: usize) -> Option<usize> {
+ separator.find_in(&self [start .. end])
+ }
+ 
+ fn rfind(&self, separator: &P, end: usize) -> Option<usize> {
+ separator.rfind_in(&self [.. end])
+ }
+ 
+ fn split_once(self, index: usize) ->(Self, Self) {
+ if INCL { let separator = self [index ..] . chars().next().unwrap(); self.split_at(index + separator.len_utf8()) } else { let(left, right) = self.split_at(index); let mut right_iter = right.chars(); right_iter.next(); (left, right_iter.as_str()) }
+ }
+ 
+ fn fold_splits(self, separator: &P, folder: F, skip_last: bool) -> F {
+ if INCL { debug_assert!(! skip_last); separator.fold_inclusive_splits(self, folder) } else { separator.fold_splits(self, folder, skip_last) }
+ }
+ 
+}
+
+/// Parallel iterator over substrings separated by a pattern
+#[derive(Debug, Clone)]
+pub struct SplitInclusive<ch, P: Pattern> {
+ chars: &str,
+ separator: P,
+}
+
+impl<ch, P: Pattern> SplitInclusive<'ch, P> {
+ fn new(chars: &str, separator: P) -> Self {
+ SplitInclusive { chars, separator }
+ }
+ 
+}
+
+impl<ch, P: Pattern> ParallelIterator for SplitInclusive<'ch, P> {
+ type Item = &str;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ let producer = SplitInclusiveProducer::new_incl(self.chars, &self.separator);
+ bridge_unindexed(producer, consumer)
+ }
+ 
+}
+
+/// Parallel iterator over substrings separated by a terminator pattern
+#[derive(Debug, Clone)]
+pub struct SplitTerminator<ch, P: Pattern> {
+ chars: &str,
+ terminator: P,
+}
+
+struct SplitTerminatorProducer<ch, sep, P: Pattern> {
+ splitter: SplitProducer<'sep, P, &str>,
+ skip_last: bool,
+}
+
+impl<ch, P: Pattern> SplitTerminator<'ch, P> {
+ fn new(chars: &str, terminator: P) -> Self {
+ SplitTerminator { chars, terminator }
+ }
+ 
+}
+
+impl<ch, sep, P: Pattern + sep> SplitTerminatorProducer<'ch, 'sep, P> {
+ fn new(chars: &str, terminator: &P) -> Self {
+ SplitTerminatorProducer { splitter: SplitProducer::new(chars, terminator), skip_last: chars.is_empty() || terminator.is_suffix_of(chars) }
+ }
+ 
+}
+
+impl<ch, P: Pattern> ParallelIterator for SplitTerminator<'ch, P> {
+ type Item = &str;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ let producer = SplitTerminatorProducer::new(self.chars, &self.terminator);
+ bridge_unindexed(producer, consumer)
+ }
+ 
+}
+
+impl<ch, sep, P: Pattern + sep> UnindexedProducer for SplitTerminatorProducer<'ch, 'sep, P> {
+ type Item = &str;
+ fn split(self) ->(Self, Option<Self>) {
+ let _ = self.splitter.split();
+ self.splitter = left;
+ let right = right.map(| right | { let skip_last = self.skip_last; self.skip_last = false; SplitTerminatorProducer { splitter: right, skip_last } });
+ (self, right)
+ }
+ 
+ fn fold_with(self, folder: F) -> F {
+ self.splitter.fold_with(folder, self.skip_last)
+ }
+ 
+}
+
+/// Parallel iterator over lines in a string
+#[derive(Debug, Clone)]
+pub struct Lines<ch> {
+ (&str),
+}
+
+#[inline]
+fn no_carriage_return(line: &str) -> &str {
+ line.strip_suffix('\r').unwrap_or(line)
+}
+
+impl<ch> ParallelIterator for Lines<'ch> {
+ type Item = &str;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ self.0.par_split_terminator('\n').map(no_carriage_return).drive_unindexed(consumer)
+ }
+ 
+}
+
+/// Parallel iterator over substrings separated by whitespace
+#[derive(Debug, Clone)]
+pub struct SplitWhitespace<ch> {
+ (&str),
+}
+
+#[inline]
+fn not_empty(s: &&str) -> bool {
+ ! s.is_empty()
+}
+
+impl<ch> ParallelIterator for SplitWhitespace<'ch> {
+ type Item = &str;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ self.0.par_split(char::is_whitespace).filter(not_empty).drive_unindexed(consumer)
+ }
+ 
+}
+
+/// Parallel iterator over substrings separated by ASCII whitespace
+#[derive(Debug, Clone)]
+pub struct SplitAsciiWhitespace<ch> {
+ (&str),
+}
+
+#[inline]
+fn is_ascii_whitespace(c: char) -> bool {
+ c.is_ascii_whitespace()
+}
+
+impl<ch> ParallelIterator for SplitAsciiWhitespace<'ch> {
+ type Item = &str;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ self.0.par_split(is_ascii_whitespace).filter(not_empty).drive_unindexed(consumer)
+ }
+ 
+}
+
+/// Parallel iterator over substrings that match a pattern
+#[derive(Debug, Clone)]
+pub struct Matches<ch, P: Pattern> {
+ chars: &str,
+ pattern: P,
+}
+
+struct MatchesProducer<ch, pat, P: Pattern> {
+ chars: &str,
+ pattern: &P,
+}
+
+impl<ch, P: Pattern> ParallelIterator for Matches<'ch, P> {
+ type Item = &str;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ let producer = MatchesProducer { chars: self.chars, pattern: &self.pattern };
+ bridge_unindexed(producer, consumer)
+ }
+ 
+}
+
+impl<ch, pat, P: Pattern> UnindexedProducer for MatchesProducer<'ch, 'pat, P> {
+ type Item = &str;
+ fn split(self) ->(Self, Option<Self>) {
+ match split(self.chars) { Some((left, right)) =>(MatchesProducer { chars: left, .. self }, Some(MatchesProducer { chars: right, .. self }) ), None =>(self, None) }
+ }
+ 
+ fn fold_with(self, folder: F) -> F {
+ self.pattern.fold_matches(self.chars, folder)
+ }
+ 
+}
+
+/// Parallel iterator over substrings that match a pattern, with their positions
+#[derive(Debug, Clone)]
+pub struct MatchIndices<ch, P: Pattern> {
+ chars: &str,
+ pattern: P,
+}
+
+struct MatchIndicesProducer<ch, pat, P: Pattern> {
+ index: usize,
+ chars: &str,
+ pattern: &P,
+}
+
+impl<ch, P: Pattern> ParallelIterator for MatchIndices<'ch, P> {
+ type Item = (usize, &str);
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ let producer = MatchIndicesProducer { index: 0, chars: self.chars, pattern: &self.pattern };
+ bridge_unindexed(producer, consumer)
+ }
+ 
+}
+
+impl<ch, pat, P: Pattern> UnindexedProducer for MatchIndicesProducer<'ch, 'pat, P> {
+ type Item = (usize, &str);
+ fn split(self) ->(Self, Option<Self>) {
+ match split(self.chars) { Some((left, right)) =>(MatchIndicesProducer { chars: left, .. self }, Some(MatchIndicesProducer { chars: right, index: self.index + left.len(), .. self }) ), None =>(self, None) }
+ }
+ 
+ fn fold_with(self, folder: F) -> F {
+ self.pattern.fold_match_indices(self.chars, folder, self.index)
+ }
+ 
+}
+

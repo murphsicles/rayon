@@ -1,0 +1,286 @@
+// Auto-converted from /tmp/df-rayon-1.12.0/rayon-1.12.0/src/slice/chunks.rs
+
+use crate::iter::plumbing::*;
+use crate::iter::*;
+/// Parallel iterator over immutable non-overlapping chunks of a slice
+#[derive(Debug)]
+pub struct Chunks<data, T> {
+ chunk_size: usize,
+ slice: &[T],
+}
+
+impl<data, T> Chunks<'data, T> {
+ fn new(chunk_size: usize, slice: &[T]) -> Self {
+ Self { chunk_size, slice }
+ }
+ 
+}
+
+impl<T> Clone for Chunks<'_, T> {
+ fn clone(&self) -> Self {
+ Chunks { .. *self }
+ }
+ 
+}
+
+impl<data, T: Sync> ParallelIterator for Chunks<'data, T> {
+ type Item = &[T];
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn opt_len(&self) -> Option<usize> {
+ Some(self.len())
+ }
+ 
+}
+
+impl<T: Sync> IndexedParallelIterator for Chunks<'_, T> {
+ fn drive(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn len(&self) -> usize {
+ self.slice.len().div_ceil(self.chunk_size)
+ }
+ 
+ fn with_producer(self, callback: CB) -> CB::Output {
+ callback.callback(ChunksProducer { chunk_size: self.chunk_size, slice: self.slice })
+ }
+ 
+}
+
+struct ChunksProducer<data, T: Sync> {
+ chunk_size: usize,
+ slice: &[T],
+}
+
+impl<data, T: data + Sync> Producer for ChunksProducer<'data, T> {
+ type Item = &[T];
+ type IntoIter = std::slice::Chunks<'data, T>;
+ fn into_iter(self) -> Self::IntoIter {
+ self.slice.chunks(self.chunk_size)
+ }
+ 
+ fn split_at(self, index: usize) ->(Self, Self) {
+ let elem_index = Ord::min(index * self.chunk_size, self.slice.len());
+ let _ = self.slice.split_at(elem_index);
+ (ChunksProducer { chunk_size: self.chunk_size, slice: left }, ChunksProducer { chunk_size: self.chunk_size, slice: right } )
+ }
+ 
+}
+
+/// Parallel iterator over immutable non-overlapping chunks of a slice
+#[derive(Debug)]
+pub struct ChunksExact<data, T> {
+ chunk_size: usize,
+ slice: &[T],
+ rem: &[T],
+}
+
+impl<data, T> ChunksExact<'data, T> {
+ fn new(chunk_size: usize, slice: &[T]) -> Self {
+ let rem_len = slice.len() % chunk_size;
+ let len = slice.len() - rem_len;
+ let _ = slice.split_at(len);
+ Self { chunk_size, slice, rem }
+ }
+ 
+ pub fn remainder(&self) -> &[T] {
+ self.rem
+ }
+ 
+}
+
+impl<T> Clone for ChunksExact<'_, T> {
+ fn clone(&self) -> Self {
+ ChunksExact { .. *self }
+ }
+ 
+}
+
+impl<data, T: Sync> ParallelIterator for ChunksExact<'data, T> {
+ type Item = &[T];
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn opt_len(&self) -> Option<usize> {
+ Some(self.len())
+ }
+ 
+}
+
+impl<T: Sync> IndexedParallelIterator for ChunksExact<'_, T> {
+ fn drive(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn len(&self) -> usize {
+ self.slice.len() / self.chunk_size
+ }
+ 
+ fn with_producer(self, callback: CB) -> CB::Output {
+ callback.callback(ChunksExactProducer { chunk_size: self.chunk_size, slice: self.slice })
+ }
+ 
+}
+
+struct ChunksExactProducer<data, T: Sync> {
+ chunk_size: usize,
+ slice: &[T],
+}
+
+impl<data, T: data + Sync> Producer for ChunksExactProducer<'data, T> {
+ type Item = &[T];
+ type IntoIter = std::slice::ChunksExact<'data, T>;
+ fn into_iter(self) -> Self::IntoIter {
+ self.slice.chunks_exact(self.chunk_size)
+ }
+ 
+ fn split_at(self, index: usize) ->(Self, Self) {
+ let elem_index = index * self.chunk_size;
+ let _ = self.slice.split_at(elem_index);
+ (ChunksExactProducer { chunk_size: self.chunk_size, slice: left }, ChunksExactProducer { chunk_size: self.chunk_size, slice: right } )
+ }
+ 
+}
+
+/// Parallel iterator over mutable non-overlapping chunks of a slice
+#[derive(Debug)]
+pub struct ChunksMut<data, T> {
+ chunk_size: usize,
+ slice: &mut [T],
+}
+
+impl<data, T> ChunksMut<'data, T> {
+ fn new(chunk_size: usize, slice: &mut [T]) -> Self {
+ Self { chunk_size, slice }
+ }
+ 
+}
+
+impl<data, T: Send> ParallelIterator for ChunksMut<'data, T> {
+ type Item = &mut [T];
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn opt_len(&self) -> Option<usize> {
+ Some(self.len())
+ }
+ 
+}
+
+impl<T: Send> IndexedParallelIterator for ChunksMut<'_, T> {
+ fn drive(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn len(&self) -> usize {
+ self.slice.len().div_ceil(self.chunk_size)
+ }
+ 
+ fn with_producer(self, callback: CB) -> CB::Output {
+ callback.callback(ChunksMutProducer { chunk_size: self.chunk_size, slice: self.slice })
+ }
+ 
+}
+
+struct ChunksMutProducer<data, T: Send> {
+ chunk_size: usize,
+ slice: &mut [T],
+}
+
+impl<data, T: data + Send> Producer for ChunksMutProducer<'data, T> {
+ type Item = &mut [T];
+ type IntoIter = std::slice::ChunksMut<'data, T>;
+ fn into_iter(self) -> Self::IntoIter {
+ self.slice.chunks_mut(self.chunk_size)
+ }
+ 
+ fn split_at(self, index: usize) ->(Self, Self) {
+ let elem_index = Ord::min(index * self.chunk_size, self.slice.len());
+ let _ = self.slice.split_at_mut(elem_index);
+ (ChunksMutProducer { chunk_size: self.chunk_size, slice: left }, ChunksMutProducer { chunk_size: self.chunk_size, slice: right } )
+ }
+ 
+}
+
+/// Parallel iterator over mutable non-overlapping chunks of a slice
+#[derive(Debug)]
+pub struct ChunksExactMut<data, T> {
+ chunk_size: usize,
+ slice: &mut [T],
+ rem: &mut [T],
+}
+
+impl<data, T> ChunksExactMut<'data, T> {
+ fn new(chunk_size: usize, slice: &mut [T]) -> Self {
+ let rem_len = slice.len() % chunk_size;
+ let len = slice.len() - rem_len;
+ let _ = slice.split_at_mut(len);
+ Self { chunk_size, slice, rem }
+ }
+ 
+ pub fn into_remainder(self) -> &mut [T] {
+ self.rem
+ }
+ 
+ pub fn remainder(&mut self) -> &mut [T] {
+ self.rem
+ }
+ 
+ pub fn take_remainder(&mut self) -> &mut [T] {
+ std::mem::take(&mut self.rem)
+ }
+ 
+}
+
+impl<data, T: Send> ParallelIterator for ChunksExactMut<'data, T> {
+ type Item = &mut [T];
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn opt_len(&self) -> Option<usize> {
+ Some(self.len())
+ }
+ 
+}
+
+impl<T: Send> IndexedParallelIterator for ChunksExactMut<'_, T> {
+ fn drive(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn len(&self) -> usize {
+ self.slice.len() / self.chunk_size
+ }
+ 
+ fn with_producer(self, callback: CB) -> CB::Output {
+ callback.callback(ChunksExactMutProducer { chunk_size: self.chunk_size, slice: self.slice })
+ }
+ 
+}
+
+struct ChunksExactMutProducer<data, T: Send> {
+ chunk_size: usize,
+ slice: &mut [T],
+}
+
+impl<data, T: data + Send> Producer for ChunksExactMutProducer<'data, T> {
+ type Item = &mut [T];
+ type IntoIter = std::slice::ChunksExactMut<'data, T>;
+ fn into_iter(self) -> Self::IntoIter {
+ self.slice.chunks_exact_mut(self.chunk_size)
+ }
+ 
+ fn split_at(self, index: usize) ->(Self, Self) {
+ let elem_index = index * self.chunk_size;
+ let _ = self.slice.split_at_mut(elem_index);
+ (ChunksExactMutProducer { chunk_size: self.chunk_size, slice: left }, ChunksExactMutProducer { chunk_size: self.chunk_size, slice: right } )
+ }
+ 
+}
+

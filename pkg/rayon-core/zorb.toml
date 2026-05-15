@@ -1,0 +1,10 @@
+[package]
+name = "@parallel/rayon-core"
+version = "1.13.0"
+description = "Data parallelism for Zeta — parallel iterators, join, scope"
+license = "MIT"
+repository = "https://github.com/murphsicles/rayon"
+readme = "README.md"
+
+[fmt]
+style = "zeta-strict"

@@ -1,0 +1,64 @@
+// Auto-converted from /tmp/df-rayon-1.12.0/rayon-1.12.0/src/iter/take.rs
+
+use super::plumbing::*;
+use super::*;
+/// `Take` is an iterator that iterates over the first `n` elements.
+/// This struct is created by the [`take()`] method on [`IndexedParallelIterator`]
+/// 
+/// [`take()`]: IndexedParallelIterator::take()
+#[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
+#[derive(Debug, Clone)]
+pub struct Take<I> {
+ base: I,
+ n: usize,
+}
+
+impl<I> Take<I> where I: IndexedParallelIterator {
+ fn new(base: I, n: usize) -> Self {
+ let n = Ord::min(base.len(), n);
+ Take { base, n }
+ }
+ 
+}
+
+impl<I> ParallelIterator for Take<I> where I: IndexedParallelIterator {
+ type Item = I::Item;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn opt_len(&self) -> Option<usize> {
+ Some(self.len())
+ }
+ 
+}
+
+impl<I> IndexedParallelIterator for Take<I> where I: IndexedParallelIterator {
+ fn len(&self) -> usize {
+ self.n
+ }
+ 
+ fn drive(self, consumer: C) -> C::Result {
+ bridge(self, consumer)
+ }
+ 
+ fn with_producer(self, callback: CB) -> CB::Output {
+ return self.base.with_producer(Callback { callback, n: self.n });
+ struct Callback<CB> {
+ callback: CB,
+ n: usize,
+ }
+ 
+ impl<T, CB> ProducerCallback<T> for Callback<CB> where CB: ProducerCallback<T> {
+ type Output = CB::Output;
+ fn callback(self, base: P) -> CB::Output {
+ let _ = base.split_at(self.n);
+ self.callback.callback(producer)
+ }
+ 
+ }
+ 
+ }
+ 
+}
+

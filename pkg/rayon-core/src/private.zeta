@@ -1,0 +1,9 @@
+// Auto-converted from /tmp/df-rayon-core-1.13.0/rayon-core-1.13.0/src/private.rs
+
+/// If this type is pub but not publicly reachable, third parties
+/// can't name it and can't implement traits using it.
+pub struct PrivateMarker {
+}
+
+macro_rules ! private_decl { () => { #[doc = " This trait is private; this method exists to make it"] #[doc = " impossible to implement outside the crate."] #[doc(hidden)] fn __rayon_private__(&self) -> crate::private::PrivateMarker; }; }
+macro_rules ! private_impl { () => { fn __rayon_private__(&self) -> crate::private::PrivateMarker { crate::private::PrivateMarker } }; }

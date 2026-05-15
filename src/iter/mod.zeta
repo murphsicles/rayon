@@ -1,0 +1,460 @@
+// Auto-converted from /tmp/df-rayon-1.12.0/rayon-1.12.0/src/iter/mod.rs
+
+use self::plumbing::*;
+use self::private::Try;
+pub use either::Either;
+use std::cmp::Ordering;
+use std::collections::LinkedList;
+use std::iter::{ Product, Sum };
+use std::ops::{ Fn, RangeBounds };
+pub mod plumbing;
+#[cfg(test)]
+mod test;
+mod blocks;
+mod chain;
+mod chunks;
+mod cloned;
+mod collect;
+mod copied;
+mod empty;
+mod enumerate;
+mod extend;
+mod filter;
+mod filter_map;
+mod find;
+mod find_first_last;
+mod flat_map;
+mod flat_map_iter;
+mod flatten;
+mod flatten_iter;
+mod fold;
+mod fold_chunks;
+mod fold_chunks_with;
+mod for_each;
+mod from_par_iter;
+mod inspect;
+mod interleave;
+mod interleave_shortest;
+mod intersperse;
+mod len;
+mod map;
+mod map_with;
+mod multizip;
+mod noop;
+mod once;
+mod panic_fuse;
+mod par_bridge;
+mod positions;
+mod product;
+mod reduce;
+mod repeat;
+mod rev;
+mod skip;
+mod skip_any;
+mod skip_any_while;
+mod splitter;
+mod step_by;
+mod sum;
+mod take;
+mod take_any;
+mod take_any_while;
+mod try_fold;
+mod try_reduce;
+mod try_reduce_with;
+mod unzip;
+mod update;
+mod walk_tree;
+mod while_some;
+mod zip;
+mod zip_eq;
+pub use self::{ blocks::{ ExponentialBlocks, UniformBlocks }, chain::Chain, chunks::Chunks, cloned::Cloned, copied::Copied, empty::{ empty, Empty }, enumerate::Enumerate, filter::Filter, filter_map::FilterMap, flat_map::FlatMap, flat_map_iter::FlatMapIter, flatten::Flatten, flatten_iter::FlattenIter, fold::{ Fold, FoldWith }, fold_chunks::FoldChunks, fold_chunks_with::FoldChunksWith, inspect::Inspect, interleave::Interleave, interleave_shortest::InterleaveShortest, intersperse::Intersperse, len::{ MaxLen, MinLen }, map::Map, map_with::{ MapInit, MapWith }, multizip::MultiZip, once::{ once, Once }, panic_fuse::PanicFuse, par_bridge::{ IterBridge, ParallelBridge }, positions::Positions, repeat::{ repeat, repeat_n, Repeat, RepeatN }, rev::Rev, skip::Skip, skip_any::SkipAny, skip_any_while::SkipAnyWhile, splitter::{ split, Split }, step_by::StepBy, take::Take, take_any::TakeAny, take_any_while::TakeAnyWhile, try_fold::{ TryFold, TryFoldWith }, update::Update, walk_tree::{ walk_tree, walk_tree_postfix, walk_tree_prefix, WalkTree, WalkTreePostfix, WalkTreePrefix }, while_some::WhileSome, zip::Zip, zip_eq::ZipEq };
+#[allow(deprecated)] pub use repeat::repeatn;
+/// `IntoParallelIterator` implements the conversion to a [`ParallelIterator`].
+/// 
+/// By implementing `IntoParallelIterator` for a type, you define how it will
+/// transformed into an iterator. This is a parallel version of the standard
+/// library's [`std::iter::IntoIterator`] trait.
+pub trait IntoParallelIterator {
+ type Iter;
+ type Item;
+ fn into_par_iter(self) -> Self::Iter
+}
+
+/// `IntoParallelRefIterator` implements the conversion to a
+/// [`ParallelIterator`], providing shared references to the data.
+/// 
+/// This is a parallel version of the `iter()` method
+/// defined by various collections.
+/// 
+/// This trait is automatically implemented
+/// `for I where &I: IntoParallelIterator`. In most cases, users
+/// will want to implement [`IntoParallelIterator`] rather than implement
+/// this trait directly.
+pub trait IntoParallelRefIterator<data> {
+ type Iter;
+ type Item;
+ fn par_iter(&self) -> Self::Iter
+}
+
+impl<data, I: data + Sized> IntoParallelRefIterator<data> for I where &I: IntoParallelIterator {
+ type Iter = IntoParallelIterator::Iter;
+ type Item = IntoParallelIterator::Item;
+ fn par_iter(&self) -> Self::Iter {
+ self.into_par_iter()
+ }
+ 
+}
+
+/// `IntoParallelRefMutIterator` implements the conversion to a
+/// [`ParallelIterator`], providing mutable references to the data.
+/// 
+/// This is a parallel version of the `iter_mut()` method
+/// defined by various collections.
+/// 
+/// This trait is automatically implemented
+/// `for I where &mut I: IntoParallelIterator`. In most cases, users
+/// will want to implement [`IntoParallelIterator`] rather than implement
+/// this trait directly.
+pub trait IntoParallelRefMutIterator<data> {
+ type Iter;
+ type Item;
+ fn par_iter_mut(&mut self) -> Self::Iter
+}
+
+impl<data, I: data + Sized> IntoParallelRefMutIterator<data> for I where &mut I: IntoParallelIterator {
+ type Iter = IntoParallelIterator::Iter;
+ type Item = IntoParallelIterator::Item;
+ fn par_iter_mut(&mut self) -> Self::Iter {
+ self.into_par_iter()
+ }
+ 
+}
+
+/// Parallel version of the standard iterator trait.
+/// 
+/// The combinators on this trait are available on **all**parallel
+/// iterators. Additional methods can be found on the
+/// [`IndexedParallelIterator`] trait: those methods are only
+/// available for parallel iterators where the number of items is
+/// known in advance(so, e.g., after invoking `filter`, those methods
+/// become unavailable).
+/// 
+/// For examples of using parallel iterators, see [the docs on the
+/// `iter` module][iter].
+/// 
+/// [iter]: self
+pub trait ParallelIterator {
+ type Item;
+ fn for_each<OP>(self, op: OP) where OP: Fn + Sync + Send;
+ fn for_each_with<OP, T>(self, init: T, op: OP) where OP: Fn + Sync + Send, T: Send + Clone;
+ fn for_each_init<OP, INIT, T>(self, init: INIT, op: OP) where OP: Fn + Sync + Send, INIT: Fn + Sync + Send;
+ fn try_for_each<OP, R>(self, op: OP) -> R where OP: Fn + Sync + Send, R: Try<_> + Send;
+ fn try_for_each_with<OP, T, R>(self, init: T, op: OP) -> R where OP: Fn + Sync + Send, T: Send + Clone, R: Try<_> + Send;
+ fn try_for_each_init<OP, INIT, T, R>(self, init: INIT, op: OP) -> R where OP: Fn + Sync + Send, INIT: Fn + Sync + Send, R: Try<_> + Send;
+ fn count(self) -> usize;
+ fn map<F, R>(self, map_op: F) -> Map<Self, F> where F: Fn + Sync + Send, R: Send;
+ fn map_with<F, T, R>(self, init: T, map_op: F) -> MapWith<Self, T, F> where F: Fn + Sync + Send, T: Send + Clone, R: Send;
+ fn map_init<F, INIT, T, R>(self, init: INIT, map_op: F) -> MapInit<Self, INIT, F> where F: Fn + Sync + Send, INIT: Fn + Sync + Send, R: Send;
+ fn cloned<a, T>(self) -> Cloned<Self> where T: a + Clone + Send, Self: ParallelIterator<_>;
+ fn copied<a, T>(self) -> Copied<Self> where T: a + Copy + Send, Self: ParallelIterator<_>;
+ fn inspect<OP>(self, inspect_op: OP) -> Inspect<Self, OP> where OP: Fn + Sync + Send;
+ fn update<F>(self, update_op: F) -> Update<Self, F> where F: Fn + Sync + Send;
+ fn filter<P>(self, filter_op: P) -> Filter<Self, P> where P: Fn + Sync + Send;
+ fn filter_map<P, R>(self, filter_op: P) -> FilterMap<Self, P> where P: Fn + Sync + Send, R: Send;
+ fn flat_map<F, PI>(self, map_op: F) -> FlatMap<Self, F> where F: Fn + Sync + Send, PI: IntoParallelIterator;
+ fn flat_map_iter<F, SI>(self, map_op: F) -> FlatMapIter<Self, F> where F: Fn + Sync + Send, SI: IntoIterator<_>;
+ fn flatten(self) -> Flatten<Self> where Self::Item: IntoParallelIterator;
+ fn flatten_iter(self) -> FlattenIter<Self> where Self::Item: IntoIterator<_>;
+ fn reduce<OP, ID>(self, identity: ID, op: OP) -> Self::Item where OP: Fn + Sync + Send, ID: Fn + Sync + Send;
+ fn reduce_with<OP>(self, op: OP) -> Option<Self::Item> where OP: Fn + Sync + Send;
+ fn try_reduce<T, OP, ID>(self, identity: ID, op: OP) -> Self::Item where OP: Fn + Sync + Send, ID: Fn + Sync + Send, Self::Item: Try<_>;
+ fn try_reduce_with<T, OP>(self, op: OP) -> Option<Self::Item> where OP: Fn + Sync + Send, Self::Item: Try<_>;
+ fn fold<T, ID, F>(self, identity: ID, fold_op: F) -> Fold<Self, ID, F> where F: Fn + Sync + Send, ID: Fn + Sync + Send, T: Send;
+ fn fold_with<F, T>(self, init: T, fold_op: F) -> FoldWith<Self, T, F> where F: Fn + Sync + Send, T: Send + Clone;
+ fn try_fold<T, R, ID, F>(self, identity: ID, fold_op: F) -> TryFold<Self, R, ID, F> where F: Fn + Sync + Send, ID: Fn + Sync + Send, R: Try<_> + Send;
+ fn try_fold_with<F, T, R>(self, init: T, fold_op: F) -> TryFoldWith<Self, R, F> where F: Fn + Sync + Send, R: Try<_> + Send, T: Clone + Send;
+ fn sum<S>(self) -> S where S: Send + Sum<Self::Item> + Sum<S>;
+ fn product<P>(self) -> P where P: Send + Product<Self::Item> + Product<P>;
+ fn min(self) -> Option<Self::Item> where Self::Item: Ord;
+ fn min_by<F>(self, f: F) -> Option<Self::Item> where F: Sync + Send + Fn;
+ fn min_by_key<K, F>(self, f: F) -> Option<Self::Item> where K: Ord + Send, F: Sync + Send + Fn;
+ fn max(self) -> Option<Self::Item> where Self::Item: Ord;
+ fn max_by<F>(self, f: F) -> Option<Self::Item> where F: Sync + Send + Fn;
+ fn max_by_key<K, F>(self, f: F) -> Option<Self::Item> where K: Ord + Send, F: Sync + Send + Fn;
+ fn chain<C>(self, chain: C) -> Chain<Self, C::Iter> where C: IntoParallelIterator<_>;
+ fn find_any<P>(self, predicate: P) -> Option<Self::Item> where P: Fn + Sync + Send;
+ fn find_first<P>(self, predicate: P) -> Option<Self::Item> where P: Fn + Sync + Send;
+ fn find_last<P>(self, predicate: P) -> Option<Self::Item> where P: Fn + Sync + Send;
+ fn find_map_any<P, R>(self, predicate: P) -> Option<R> where P: Fn + Sync + Send, R: Send;
+ fn find_map_first<P, R>(self, predicate: P) -> Option<R> where P: Fn + Sync + Send, R: Send;
+ fn find_map_last<P, R>(self, predicate: P) -> Option<R> where P: Fn + Sync + Send, R: Send;
+ fn find<P>(self, predicate: P) -> Option<Self::Item> where P: Fn + Sync + Send;
+ fn any<P>(self, predicate: P) -> bool where P: Fn + Sync + Send;
+ fn all<P>(self, predicate: P) -> bool where P: Fn + Sync + Send;
+ fn while_some<T>(self) -> WhileSome<Self> where Self: ParallelIterator<_>, T: Send;
+ fn panic_fuse(self) -> PanicFuse<Self>;
+ fn collect<C>(self) -> C where C: FromParallelIterator<Self::Item>;
+ fn unzip<A, B, FromA, FromB>(self) ->(FromA, FromB) where Self: ParallelIterator<_>, FromA: Default + Send + ParallelExtend<A>, FromB: Default + Send + ParallelExtend<B>, A: Send, B: Send;
+ fn partition<A, B, P>(self, predicate: P) ->(A, B) where A: Default + Send + ParallelExtend<Self::Item>, B: Default + Send + ParallelExtend<Self::Item>, P: Fn + Sync + Send;
+ fn partition_map<A, B, P, L, R>(self, predicate: P) ->(A, B) where A: Default + Send + ParallelExtend<L>, B: Default + Send + ParallelExtend<R>, P: Fn + Sync + Send, L: Send, R: Send;
+ fn intersperse(self, element: Self::Item) -> Intersperse<Self> where Self::Item: Clone;
+ fn take_any(self, n: usize) -> TakeAny<Self>;
+ fn skip_any(self, n: usize) -> SkipAny<Self>;
+ fn take_any_while<P>(self, predicate: P) -> TakeAnyWhile<Self, P> where P: Fn + Sync + Send;
+ fn skip_any_while<P>(self, predicate: P) -> SkipAnyWhile<Self, P> where P: Fn + Sync + Send;
+ fn collect_vec_list(self) -> LinkedList<Vec<Self::Item>>;
+ fn drive_unindexed<C>(self, consumer: C) -> C::Result where C: UnindexedConsumer<Self::Item>;
+ fn opt_len(&self) -> Option<usize>
+}
+
+impl<T: ParallelIterator> IntoParallelIterator for T {
+ type Iter = T;
+ type Item = T::Item;
+ fn into_par_iter(self) -> T {
+ self
+ }
+ 
+}
+
+/// An iterator that supports "random access" to its data, meaning
+/// that you can split it at arbitrary indices and draw data from
+/// those points.
+/// 
+/// **Note:**Not implemented for `u64`, `i64`, `u128`, or `i128` ranges
+pub trait IndexedParallelIterator {
+ fn by_exponential_blocks(self) -> ExponentialBlocks<Self>;
+ fn by_uniform_blocks(self, block_size: usize) -> UniformBlocks<Self>;
+ fn collect_into_vec(self, target: &mut Vec<Self::Item>);
+ fn unzip_into_vecs<A, B>(self, left: &mut Vec<A>, right: &mut Vec<B>) where Self: IndexedParallelIterator<_>, A: Send, B: Send;
+ fn zip<Z>(self, zip_op: Z) -> Zip<Self, Z::Iter> where Z: IntoParallelIterator<_>;
+ fn zip_eq<Z>(self, zip_op: Z) -> ZipEq<Self, Z::Iter> where Z: IntoParallelIterator<_>;
+ fn interleave<I>(self, other: I) -> Interleave<Self, I::Iter> where I: IntoParallelIterator<_, _>;
+ fn interleave_shortest<I>(self, other: I) -> InterleaveShortest<Self, I::Iter> where I: IntoParallelIterator<_, _>;
+ fn chunks(self, chunk_size: usize) -> Chunks<Self>;
+ fn fold_chunks<T, ID, F>(self, chunk_size: usize, identity: ID, fold_op: F) -> FoldChunks<Self, ID, F> where ID: Fn + Send + Sync, F: Fn + Send + Sync, T: Send;
+ fn fold_chunks_with<T, F>(self, chunk_size: usize, init: T, fold_op: F) -> FoldChunksWith<Self, T, F> where T: Send + Clone, F: Fn + Send + Sync;
+ fn cmp<I>(self, other: I) -> Ordering where I: IntoParallelIterator<_, _>, Self::Item: Ord;
+ fn partial_cmp<I>(self, other: I) -> Option<Ordering> where I: IntoParallelIterator<_>, Self::Item: PartialOrd<I::Item>;
+ fn eq<I>(self, other: I) -> bool where I: IntoParallelIterator<_>, Self::Item: PartialEq<I::Item>;
+ fn ne<I>(self, other: I) -> bool where I: IntoParallelIterator<_>, Self::Item: PartialEq<I::Item>;
+ fn lt<I>(self, other: I) -> bool where I: IntoParallelIterator<_>, Self::Item: PartialOrd<I::Item>;
+ fn le<I>(self, other: I) -> bool where I: IntoParallelIterator<_>, Self::Item: PartialOrd<I::Item>;
+ fn gt<I>(self, other: I) -> bool where I: IntoParallelIterator<_>, Self::Item: PartialOrd<I::Item>;
+ fn ge<I>(self, other: I) -> bool where I: IntoParallelIterator<_>, Self::Item: PartialOrd<I::Item>;
+ fn enumerate(self) -> Enumerate<Self>;
+ fn step_by(self, step: usize) -> StepBy<Self>;
+ fn skip(self, n: usize) -> Skip<Self>;
+ fn take(self, n: usize) -> Take<Self>;
+ fn position_any<P>(self, predicate: P) -> Option<usize> where P: Fn + Sync + Send;
+ fn position_first<P>(self, predicate: P) -> Option<usize> where P: Fn + Sync + Send;
+ fn position_last<P>(self, predicate: P) -> Option<usize> where P: Fn + Sync + Send;
+ fn position<P>(self, predicate: P) -> Option<usize> where P: Fn + Sync + Send;
+ fn positions<P>(self, predicate: P) -> Positions<Self, P> where P: Fn + Sync + Send;
+ fn rev(self) -> Rev<Self>;
+ fn with_min_len(self, min: usize) -> MinLen<Self>;
+ fn with_max_len(self, max: usize) -> MaxLen<Self>;
+ fn len(&self) -> usize;
+ fn drive<C: Consumer<Self::Item>>(self, consumer: C) -> C::Result;
+ fn with_producer<CB: ProducerCallback<Self::Item>>(self, callback: CB) -> CB::Output
+}
+
+/// `FromParallelIterator` implements the creation of a collection
+/// from a [`ParallelIterator`]. By implementing
+/// `FromParallelIterator` for a given type, you define how it will be
+/// created from an iterator.
+/// 
+/// `FromParallelIterator` is used through [`ParallelIterator`]'s [`collect()`] method.
+/// 
+/// [`collect()`]: ParallelIterator::collect()
+/// 
+/// # Examples
+/// 
+/// Implementing `FromParallelIterator` for your type:
+/// 
+/// ```
+/// use rayon::prelude::*;
+/// 
+/// struct BlackHole {
+/// mass: usize,
+/// }
+/// 
+/// impl<T: Send> FromParallelIterator<T> for BlackHole {
+/// fn from_par_iter<I>(par_iter: I) -> Self
+/// where I: IntoParallelIterator<Item = T>
+/// {
+/// let par_iter = par_iter.into_par_iter();
+/// BlackHole {
+/// mass: par_iter.count() * size_of::<T>(),
+/// }
+/// }
+/// }
+/// 
+/// let bh: BlackHole = (0i32..1000).into_par_iter().collect();
+/// assert_eq!(bh.mass, 4000);
+/// ```
+pub trait FromParallelIterator<T> where T: Send {
+ fn from_par_iter<I>(par_iter: I) -> Self where I: IntoParallelIterator<_>
+}
+
+/// `ParallelExtend` extends an existing collection with items from a [`ParallelIterator`].
+/// 
+/// # Examples
+/// 
+/// Implementing `ParallelExtend` for your type:
+/// 
+/// ```
+/// use rayon::prelude::*;
+/// 
+/// struct BlackHole {
+/// mass: usize,
+/// }
+/// 
+/// impl<T: Send> ParallelExtend<T> for BlackHole {
+/// fn par_extend<I>(&mut self, par_iter: I)
+/// where I: IntoParallelIterator<Item = T>
+/// {
+/// let par_iter = par_iter.into_par_iter();
+/// self.mass += par_iter.count() * size_of::<T>();
+/// }
+/// }
+/// 
+/// let mut bh = BlackHole { mass: 0 };
+/// bh.par_extend(0i32..1000);
+/// assert_eq!(bh.mass, 4000);
+/// bh.par_extend(0i64..10);
+/// assert_eq!(bh.mass, 4080);
+/// ```
+pub trait ParallelExtend<T> where T: Send {
+ fn par_extend<I>(&mut self, par_iter: I) where I: IntoParallelIterator<_>
+}
+
+/// `ParallelDrainFull` creates a parallel iterator that moves all items
+/// from a collection while retaining the original capacity.
+/// 
+/// Types which are indexable typically implement [`ParallelDrainRange`]
+/// instead, where you can drain fully with `par_drain(..)`.
+pub trait ParallelDrainFull {
+ type Iter;
+ type Item;
+ fn par_drain(self) -> Self::Iter
+}
+
+/// `ParallelDrainRange` creates a parallel iterator that moves a range of items
+/// from a collection while retaining the original capacity.
+/// 
+/// Types which are not indexable may implement [`ParallelDrainFull`] instead.
+pub trait ParallelDrainRange<Idx> {
+ type Iter;
+ type Item;
+ fn par_drain<R: RangeBounds<Idx>>(self, range: R) -> Self::Iter
+}
+
+/// We hide the `Try` trait in a private module, as it's only meant to be a
+/// stable clone of the standard library's `Try` trait, as yet unstable.
+mod private {
+ use std::convert::Infallible;
+ use std::ops::ControlFlow::{ self, Break, Continue };
+ use std::task::Poll;
+ /// Clone of `std::ops::Try`.
+ /// 
+ /// Implementing this trait is not permitted outside of `rayon`.
+ pub trait Try {
+ type Output;
+ type Residual;
+ fn from_output(output: Self::Output) -> Self;
+ fn from_residual(residual: Self::Residual) -> Self;
+ fn branch(self) -> ControlFlow<Self::Residual, Self::Output>;
+ }
+ 
+ impl<B, C> Try for ControlFlow<B, C> {
+ // [unsupported impl item]
+ type Output = C;
+ type Residual = ControlFlow<B, Infallible>;
+ fn from_output(output: Self::Output) -> Self {
+ Continue(output)
+ }
+ 
+ fn from_residual(residual: Self::Residual) -> Self {
+ match residual { Break(b) => Break(b), #[allow(unreachable_patterns)] Continue(_) => unreachable!() }
+ }
+ 
+ fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+ match self { Continue(c) => Continue(c), Break(b) => Break(Break(b)) }
+ }
+ 
+ }
+ 
+ impl<T> Try for Option<T> {
+ // [unsupported impl item]
+ type Output = T;
+ type Residual = Option<Infallible>;
+ fn from_output(output: Self::Output) -> Self {
+ Some(output)
+ }
+ 
+ fn from_residual(residual: Self::Residual) -> Self {
+ match residual { None => None, #[allow(unreachable_patterns)] Some(_) => unreachable!() }
+ }
+ 
+ fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+ match self { Some(c) => Continue(c), None => Break(None) }
+ }
+ 
+ }
+ 
+ impl<T, E> Try for Result<T, E> {
+ // [unsupported impl item]
+ type Output = T;
+ type Residual = Result<Infallible, E>;
+ fn from_output(output: Self::Output) -> Self {
+ Ok(output)
+ }
+ 
+ fn from_residual(residual: Self::Residual) -> Self {
+ match residual { Err(e) => Err(e), #[allow(unreachable_patterns)] Ok(_) => unreachable!() }
+ }
+ 
+ fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+ match self { Ok(c) => Continue(c), Err(e) => Break(Err(e)) }
+ }
+ 
+ }
+ 
+ impl<T, E> Try for Poll<Result<T, E>> {
+ // [unsupported impl item]
+ type Output = Poll<T>;
+ type Residual = Result<Infallible, E>;
+ fn from_output(output: Self::Output) -> Self {
+ output.map(Ok)
+ }
+ 
+ fn from_residual(residual: Self::Residual) -> Self {
+ match residual { Err(e) => Poll::Ready(Err(e)), #[allow(unreachable_patterns)] Ok(_) => unreachable!() }
+ }
+ 
+ fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+ match self { Poll::Pending => Continue(Poll::Pending), Poll::Ready(Ok(c)) => Continue(Poll::Ready(c)), Poll::Ready(Err(e)) => Break(Err(e)) }
+ }
+ 
+ }
+ 
+ impl<T, E> Try for Poll<Option<Result<T, E>>> {
+ // [unsupported impl item]
+ type Output = Poll<Option<T>>;
+ type Residual = Result<Infallible, E>;
+ fn from_output(output: Self::Output) -> Self {
+ match output { Poll::Ready(o) => Poll::Ready(o.map(Ok)), Poll::Pending => Poll::Pending }
+ }
+ 
+ fn from_residual(residual: Self::Residual) -> Self {
+ match residual { Err(e) => Poll::Ready(Some(Err(e))), #[allow(unreachable_patterns)] Ok(_) => unreachable!() }
+ }
+ 
+ fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+ match self { Poll::Pending => Continue(Poll::Pending), Poll::Ready(None) => Continue(Poll::Ready(None)), Poll::Ready(Some(Ok(c))) => Continue(Poll::Ready(Some(c))), Poll::Ready(Some(Err(e))) => Break(Err(e)) }
+ }
+ 
+ }
+ 
+}
+

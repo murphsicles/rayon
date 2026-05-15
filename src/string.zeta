@@ -1,0 +1,38 @@
+// Auto-converted from /tmp/df-rayon-1.12.0/rayon-1.12.0/src/string.rs
+
+use crate::iter::plumbing::*;
+use crate::math::simplify_range;
+use crate::prelude::*;
+use std::ops::{ Range, RangeBounds };
+impl<a> ParallelDrainRange<usize> for &mut String {
+ type Iter = Drain<'a>;
+ type Item = char;
+ fn par_drain(self, range: R) -> Self::Iter {
+ Drain { range: simplify_range(range, self.len()), string: self }
+ }
+ 
+}
+
+/// Draining parallel iterator that moves a range of characters out of a string,
+/// but keeps the total capacity.
+#[derive(Debug)]
+pub struct Drain<a> {
+ string: &mut String,
+ range: Range<usize>,
+}
+
+impl<a> ParallelIterator for Drain<'a> {
+ type Item = char;
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ self.string [self.range.clone()] . par_chars().drive_unindexed(consumer)
+ }
+ 
+}
+
+impl<a> Drop for Drain<'a> {
+ fn drop(&mut self) {
+ self.string.drain(self.range.clone());
+ }
+ 
+}
+

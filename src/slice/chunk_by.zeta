@@ -1,0 +1,133 @@
+// Auto-converted from /tmp/df-rayon-1.12.0/rayon-1.12.0/src/slice/chunk_by.rs
+
+use crate::iter::plumbing::*;
+use crate::iter::*;
+use std::fmt;
+use std::marker::PhantomData;
+trait ChunkBySlice<T> {
+ fn split(self, index: usize) ->(Self, Self);
+ fn chunk_by(self, pred: &impl Fn) -> impl Iterator<_>;
+ fn find(&self, pred: &impl Fn, start: usize, end: usize) -> Option<usize>;
+ fn rfind(&self, pred: &impl Fn, end: usize) -> Option<usize>
+}
+
+impl<T: Sync> ChunkBySlice<T> for &[T] {
+ fn split(self, index: usize) ->(Self, Self) {
+ self.split_at(index)
+ }
+ 
+ fn chunk_by(self, pred: &impl Fn) -> impl Iterator<_> {
+ self.chunk_by(pred)
+ }
+ 
+}
+
+impl<T: Send> ChunkBySlice<T> for &mut [T] {
+ fn split(self, index: usize) ->(Self, Self) {
+ self.split_at_mut(index)
+ }
+ 
+ fn chunk_by(self, pred: &impl Fn) -> impl Iterator<_> {
+ self.chunk_by_mut(pred)
+ }
+ 
+}
+
+struct ChunkByProducer<p, T, Slice, Pred> {
+ slice: Slice,
+ pred: &Pred,
+ tail: usize,
+ marker: PhantomData<_>,
+}
+
+impl<T, Slice, Pred> UnindexedProducer for ChunkByProducer<'_, T, Slice, Pred> where Slice: ChunkBySlice<T>, Pred: Fn + Send + Sync {
+ type Item = Slice;
+ fn split(self) ->(Self, Option<Self>) {
+ if self.tail<2 { return(Self { tail: 0, .. self }, None); }
+ let mid = self.tail / 2;
+ let index = match self.slice.find(self.pred, mid, self.tail) { Some(i) => Some(mid + i), None => self.slice.rfind(self.pred, mid + 1) };
+ if let Some(index) = index { let(left, right) = self.slice.split(index); let(left_tail, right_tail) = if index <= mid { (index, 0) } else { (mid + 1, self.tail - index) }; let left = Self { slice: left, tail: left_tail, .. self }; let right = Self { slice: right, tail: right_tail, .. self }; (left, Some(right)) } else { (Self { tail: 0, .. self }, None) }
+ }
+ 
+ fn fold_with(self, folder: F) -> F {
+ let _ = self;
+ let _ = if tail == slice.as_ref().len() { (Some(slice), None) } else if let Some(index) = slice.rfind(pred, tail) { let(left, right) = slice.split(index); (Some(left), Some(right)) } else { (None, Some(slice)) };
+ if let Some(slice) = slice { folder = folder.consume_iter(slice.chunk_by(pred)); }
+ if let Some(tail) = tail { folder = folder.consume(tail); }
+ folder
+ }
+ 
+}
+
+/// Parallel iterator over slice in(non-overlapping) chunks separated by a predicate.
+/// 
+/// This struct is created by the [`par_chunk_by`] method on `&[T]`.
+/// 
+/// [`par_chunk_by`]: super::ParallelSlice::par_chunk_by()
+pub struct ChunkBy<data, T, P> {
+ pred: P,
+ slice: &[T],
+}
+
+impl<T, P: Clone> Clone for ChunkBy<'_, T, P> {
+ fn clone(&self) -> Self {
+ ChunkBy { pred: self.pred.clone(), slice: self.slice }
+ }
+ 
+}
+
+impl<T: fmt::Debug, P> fmt::Debug for ChunkBy<'_, T, P> {
+ fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+ f.debug_struct("ChunkBy").field("slice", &self.slice).finish()
+ }
+ 
+}
+
+impl<data, T, P> ChunkBy<'data, T, P> {
+ fn new(slice: &[T], pred: P) -> Self {
+ Self { pred, slice }
+ }
+ 
+}
+
+impl<data, T, P> ParallelIterator for ChunkBy<'data, T, P> where T: Sync, P: Fn + Send + Sync {
+ type Item = &[T];
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge_unindexed(ChunkByProducer { tail: self.slice.len(), slice: self.slice, pred: &self.pred, marker: PhantomData }, consumer )
+ }
+ 
+}
+
+/// Parallel iterator over slice in(non-overlapping) mutable chunks
+/// separated by a predicate.
+/// 
+/// This struct is created by the [`par_chunk_by_mut`] method on `&mut [T]`.
+/// 
+/// [`par_chunk_by_mut`]: super::ParallelSliceMut::par_chunk_by_mut()
+pub struct ChunkByMut<data, T, P> {
+ pred: P,
+ slice: &mut [T],
+}
+
+impl<T: fmt::Debug, P> fmt::Debug for ChunkByMut<'_, T, P> {
+ fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+ f.debug_struct("ChunkByMut").field("slice", &self.slice).finish()
+ }
+ 
+}
+
+impl<data, T, P> ChunkByMut<'data, T, P> {
+ fn new(slice: &mut [T], pred: P) -> Self {
+ Self { pred, slice }
+ }
+ 
+}
+
+impl<data, T, P> ParallelIterator for ChunkByMut<'data, T, P> where T: Send, P: Fn + Send + Sync {
+ type Item = &mut [T];
+ fn drive_unindexed(self, consumer: C) -> C::Result {
+ bridge_unindexed(ChunkByProducer { tail: self.slice.len(), slice: self.slice, pred: &self.pred, marker: PhantomData }, consumer )
+ }
+ 
+}
+
